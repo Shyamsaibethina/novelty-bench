@@ -177,7 +177,6 @@ class TransformersService(InferenceService):
             self.model = AutoModelForCausalLM.from_pretrained(
                 model, 
                 trust_remote_code=True,
-                dtype=torch.bfloat16,
                 device_map="auto",
                 attn_implementation="flash_attention_2"  # Use flash attention if available
             )
@@ -186,10 +185,9 @@ class TransformersService(InferenceService):
             self.model = AutoModelForCausalLM.from_pretrained(
                 model, 
                 trust_remote_code=True,
-                dtype=torch.bfloat16,
                 device_map="auto",
                 attn_implementation="eager",
-                stop=["<|end_of_text|>", "<eos>", "<end_of_turn>"] # need to be overridden for other models
+                # stop=["<|end_of_text|>", "<eos>", "<end_of_turn>"] # need to be overridden for other models
             )
         
         # Set pad token if it doesn't exist

@@ -23,7 +23,6 @@ dependencies = [
     "cohere",
     "google-genai",
     "anthropic[vertex]",
-    "vllm",
     "transformers",
     "sacrebleu",
     "accelerate",
