@@ -209,15 +209,22 @@ class TransformersService(InferenceService):
     def _generate_sync(self, messages, n, max_tokens, temperature, stop, kwargs):
         # Apply chat template to convert messages to a prompt
         try:
-            # prompt = self.tokenizer.apply_chat_template(
-            #     messages, tokenize=False, add_generation_prompt=True
-            # )
             inputs = self.tokenizer.apply_chat_template(
                 messages, add_generation_prompt=True, return_tensors="pt", padding=False, truncation=True, max_length=4000
             )
         except Exception as e:
-            print(f"Chat template failed: {e}, using fallback")
-            raise Exception(f"Chat template failed: {e}")
+            # Fallback for base models without chat template
+            print(f"Chat template not available, using simple prompt format")
+            # For base models, just concatenate the message content
+            prompt = "\n".join([msg["content"] for msg in messages])
+            inputs = self.tokenizer(
+                prompt, 
+                return_tensors="pt", 
+                padding=False, 
+                truncation=True, 
+                max_length=4000
+            )
+            inputs = inputs["input_ids"]
 
         inputs = inputs.to(self.model.device)
         
@@ -261,8 +268,16 @@ class TransformersService(InferenceService):
             for i in range(n):
                 print(f"Generating response {i+1}/{n}...")
                 with torch.no_grad():
+                    # Handle both tensor and dict inputs
+                    if isinstance(inputs, dict):
+                        gen_kwargs = inputs
+                        input_length = inputs['input_ids'].shape[1]
+                    else:
+                        gen_kwargs = {"input_ids": inputs}
+                        input_length = inputs.shape[1]
+                    
                     outputs = self.model.generate(
-                        **inputs,
+                        **gen_kwargs,
                         max_new_tokens=max_tokens,
                         temperature=temperature,
                         do_sample=True if temperature > 0 else False,
@@ -273,7 +288,7 @@ class TransformersService(InferenceService):
                     )
                     
                     # Decode only the generated part
-                    generated_tokens = outputs[0][inputs['input_ids'].shape[1]:]
+                    generated_tokens = outputs[0][input_length:]
                     response = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
                     
                     # Apply stop sequences
@@ -452,8 +467,11 @@ async def main():
     parser.add_argument(
         "--data",
         default="curated",
-        choices=["curated", "wildchat"],
-        help="Source of prompts",
+        help="Source of prompts: 'curated', 'wildchat', or path to custom JSONL file",
+    )
+    parser.add_argument(
+        "--custom-prompts",
+        help="Path to custom prompts JSONL file (alternative to --data)",
     )
     parser.add_argument(
         "--sampling",
@@ -474,9 +492,22 @@ async def main():
     )
     args = parser.parse_args()
 
-    dataset = load_dataset("yimingzhang/novelty-bench", split=args.data)
+    # Load dataset from custom file or HF
+    if args.custom_prompts:
+        print(f"Loading custom prompts from {args.custom_prompts}")
+        dataset = load_dataset("json", data_files=args.custom_prompts, split="train")
+        data_name = os.path.splitext(os.path.basename(args.custom_prompts))[0]
+    elif args.data in ["curated", "wildchat"]:
+        dataset = load_dataset("yimingzhang/novelty-bench", split=args.data)
+        data_name = args.data
+    else:
+        # Treat --data as a file path
+        print(f"Loading prompts from {args.data}")
+        dataset = load_dataset("json", data_files=args.data, split="train")
+        data_name = os.path.splitext(os.path.basename(args.data))[0]
+    
     eval_dir = (
-        args.eval_dir if args.eval_dir else os.path.join(f"{args.data}-evals", args.model)
+        args.eval_dir if args.eval_dir else os.path.join(f"{data_name}-evals", args.model)
     )
     os.makedirs(eval_dir, exist_ok=True)
     output_file = os.path.join(eval_dir, "generations.jsonl")
